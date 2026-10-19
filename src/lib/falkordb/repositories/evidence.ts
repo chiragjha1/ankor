@@ -68,6 +68,20 @@ export class EvidenceRepository {
       projectId,
     });
 
+    if (item.sourceId) {
+      await FalkorDBGraphService.query(CYPHER_QUERIES.UPSERT_SOURCE, {
+        id: item.sourceId,
+        projectId,
+        name: item.sourceTitle || item.sourceId,
+        type: "web",
+        url: item.sourceUrl || "",
+        terms_compliant: true,
+        rate_limit_status: "OK",
+        created_at: item.retrievalDate || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+
     await FalkorDBGraphService.query(CYPHER_QUERIES.UPSERT_EVIDENCE, params);
     await FalkorDBGraphService.query(CYPHER_QUERIES.LINK_SOURCE_CONTAINS_EVIDENCE, linkParams);
   }
@@ -84,7 +98,7 @@ export class EvidenceRepository {
 
       if (!isOfflineFallback && data && data.length > 0) {
         return data.map((row: any) => ({
-          id: row.s?.id || "",
+          id: row.s?.properties?.id || String(row.s?.id || ""),
           name: row.s?.properties?.name || "",
           url: row.s?.properties?.url,
           type: row.s?.properties?.type || "web",

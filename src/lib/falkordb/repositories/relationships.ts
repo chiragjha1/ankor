@@ -91,13 +91,6 @@ export class RelationshipsRepository {
     projectId: string,
     problemId?: string
   ): Promise<ContradictionItem[]> {
-    const memContradictions = memoryGraphStore.getContradictions(projectId);
-    if (memContradictions.length > 0) {
-      return problemId
-        ? memContradictions.filter((c) => c.problemId === problemId || c.problemId === "unlinked")
-        : memContradictions;
-    }
-
     if (problemId) {
       const { data, isOfflineFallback } = await FalkorDBGraphService.roQuery(
         CYPHER_QUERIES.FIND_CONTRADICTIONS_FOR_PROBLEM,
@@ -106,7 +99,7 @@ export class RelationshipsRepository {
 
       if (!isOfflineFallback && data && data.length > 0) {
         return data.map((row: any) => ({
-          claimId: row.c?.id || "",
+          claimId: row.c?.properties?.id || String(row.c?.id || ""),
           claimText: row.c?.properties?.text || "",
           problemId,
           problemTitle: "Problem Under Review",
@@ -120,78 +113,90 @@ export class RelationshipsRepository {
       }
     }
 
-    return memContradictions;
+    const memContradictions = memoryGraphStore.getContradictions(projectId);
+    if (memContradictions.length > 0) {
+      return problemId
+        ? memContradictions.filter((c) => c.problemId === problemId || c.problemId === "unlinked")
+        : memContradictions;
+    }
+
+    return [];
   }
 
   static async traceProvenance(
     projectId: string,
     problemId: string
   ): Promise<ProvenanceRecord | null> {
-    const memProvenance = memoryGraphStore.getProvenance(projectId, problemId);
-    if (memProvenance && memProvenance.claims.length > 0) {
-      return memProvenance;
-    }
-
     const { data, isOfflineFallback } = await FalkorDBGraphService.roQuery(
       CYPHER_QUERIES.TRACE_FULL_PROVENANCE,
       { problemId, projectId }
     );
 
-    if (isOfflineFallback || !data || data.length === 0) {
-      return memProvenance;
+    if (!isOfflineFallback && data && data.length > 0) {
+      const claimsMap = new Map<string, any>();
+      let problemTitle = "Identified Problem";
+
+      for (const row of data) {
+        if (row.p) problemTitle = row.p.properties?.title || problemTitle;
+        const c = row.c;
+        if (!c) continue;
+
+        const claimId = c.properties?.id || String(c.id);
+        if (!claimsMap.has(claimId)) {
+          claimsMap.set(claimId, {
+            claimId,
+            claimText: c.properties?.text || "",
+            confidence: Number(c.properties?.confidence || 0.8),
+            epistemicStatus: c.properties?.epistemic_status || "OBSERVED",
+            relation: "EVIDENCE_FOR",
+            supportingEvidence: [],
+            contradictingEvidence: [],
+          });
+        }
+
+        const entry = claimsMap.get(claimId);
+
+        if (row.eSup) {
+          const evId = row.eSup.properties?.id || String(row.eSup.id);
+          if (!entry.supportingEvidence.some((e: any) => e.evidenceId === evId)) {
+            entry.supportingEvidence.push({
+              evidenceId: evId,
+              passage: row.eSup.properties?.relevant_passage || row.eSup.properties?.excerpt || "",
+              epistemicStatus: row.eSup.properties?.epistemic_status || "OBSERVED",
+              sourceTitle: row.sSup?.properties?.name || row.eSup.properties?.source_title || "Public Source",
+              sourceUrl: row.sSup?.properties?.url || row.eSup.properties?.source_url,
+              sourceType: row.sSup?.properties?.type || "web",
+              contentHash: row.eSup.properties?.content_hash || "",
+            });
+          }
+        }
+
+        if (row.eCon) {
+          const evId = row.eCon.properties?.id || String(row.eCon.id);
+          if (!entry.contradictingEvidence.some((e: any) => e.evidenceId === evId)) {
+            entry.contradictingEvidence.push({
+              evidenceId: evId,
+              passage: row.eCon.properties?.relevant_passage || row.eCon.properties?.excerpt || "",
+              epistemicStatus: row.eCon.properties?.epistemic_status || "OBSERVED",
+              sourceTitle: row.sCon?.properties?.name || row.eCon.properties?.source_title || "Public Source",
+              sourceUrl: row.sCon?.properties?.url || row.eCon.properties?.source_url,
+              sourceType: row.sCon?.properties?.type || "web",
+              contentHash: row.eCon.properties?.content_hash || "",
+            });
+          }
+        }
+      }
+
+      if (claimsMap.size > 0) {
+        return {
+          problemId,
+          problemTitle,
+          claims: Array.from(claimsMap.values()),
+        };
+      }
     }
 
-    const claimsMap = new Map<string, any>();
-    let problemTitle = "Identified Problem";
-
-    for (const row of data) {
-      if (row.p) problemTitle = row.p.properties?.title || problemTitle;
-      const c = row.c;
-      if (!c) continue;
-
-      if (!claimsMap.has(c.id)) {
-        claimsMap.set(c.id, {
-          claimId: c.id,
-          claimText: c.properties?.text || "",
-          confidence: Number(c.properties?.confidence || 0.8),
-          epistemicStatus: c.properties?.epistemic_status || "OBSERVED",
-          relation: "EVIDENCE_FOR",
-          supportingEvidence: [],
-          contradictingEvidence: [],
-        });
-      }
-
-      const entry = claimsMap.get(c.id);
-
-      if (row.eSup) {
-        entry.supportingEvidence.push({
-          evidenceId: row.eSup.id,
-          passage: row.eSup.properties?.relevant_passage || row.eSup.properties?.excerpt || "",
-          epistemicStatus: row.eSup.properties?.epistemic_status || "OBSERVED",
-          sourceTitle: row.sSup?.properties?.name || row.eSup.properties?.source_title || "Public Source",
-          sourceUrl: row.sSup?.properties?.url,
-          sourceType: row.sSup?.properties?.type || "web",
-          contentHash: row.eSup.properties?.content_hash || "",
-        });
-      }
-
-      if (row.eCon) {
-        entry.contradictingEvidence.push({
-          evidenceId: row.eCon.id,
-          passage: row.eCon.properties?.relevant_passage || row.eCon.properties?.excerpt || "",
-          epistemicStatus: row.eCon.properties?.epistemic_status || "OBSERVED",
-          sourceTitle: row.sCon?.properties?.name || row.eCon.properties?.source_title || "Public Source",
-          sourceUrl: row.sCon?.properties?.url,
-          sourceType: row.sCon?.properties?.type || "web",
-          contentHash: row.eCon.properties?.content_hash || "",
-        });
-      }
-    }
-
-    return {
-      problemId,
-      problemTitle,
-      claims: Array.from(claimsMap.values()),
-    };
+    return memoryGraphStore.getProvenance(projectId, problemId);
   }
+
 }

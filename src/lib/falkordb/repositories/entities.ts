@@ -55,7 +55,7 @@ export class EntitiesRepository {
 
     if (!isOfflineFallback && data && data.length > 0) {
       return data.map((row: any) => ({
-        id: row.ent?.id || "",
+        id: row.ent?.properties?.id || String(row.ent?.id || ""),
         name: row.ent?.properties?.name || "",
         category: row.ent?.properties?.category || "concept",
         claimCount: Number(row.claimCount || 1),

@@ -18,9 +18,17 @@ export async function GET(
     const selectedProblemId = run?.selectedProblemId || problems[0]?.id;
 
     // Retrieve graph visualization data & statistics
-    const graphData = await GraphRetrievalService.getProjectGraph(runId);
-    const stats = await GraphRetrievalService.getGraphStats(runId);
-    const syncState = GraphSyncService.getSyncState(runId);
+    let graphData = await GraphRetrievalService.getProjectGraph(runId);
+    let stats = await GraphRetrievalService.getGraphStats(runId);
+    let syncState = GraphSyncService.getSyncState(runId);
+
+    // Auto-sync if graph is empty (e.g. initial page load or fresh cold start)
+    if (!graphData || graphData.nodes.length === 0) {
+      await GraphSyncService.syncProject(runId);
+      graphData = await GraphRetrievalService.getProjectGraph(runId);
+      stats = await GraphRetrievalService.getGraphStats(runId);
+      syncState = GraphSyncService.getSyncState(runId);
+    }
 
     // Retrieve deep provenance, contradictions, entities, and sources
     let provenance = null;
